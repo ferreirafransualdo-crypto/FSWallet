@@ -1,45 +1,218 @@
-// Lista de itens esperados na Nota Fiscal ou Pedido de Compra
-let itensRecebimento = [
-    { codigo: "7891000123456", descricao: "Correia Industrial A-40", esperado: 10, conferido: 0 },
-    { codigo: "7892000987654", descricao: "Rolamento 6204-2RS", esperado: 25, conferido: 0 }
-];
-
-// Função disparada instantaneamente a cada bip (tecla Enter ou leitura da câmera)
-function processarLeituraCodigo(codigoLido) {
-    codigoLido = codigoLido.trim();
-    
-    // 1. Busca o item na lista da nota fiscal atual
-    let item = itensRecebimento.find(i => i.codigo === codigoLido);
-
-    if (!item) {
-        tocarAlertaErro();
-        exibirMensagemAlerta(`Atenção: O código ${codigoLido} não consta nesta Nota Fiscal!`);
-        return;
-    }
-
-    // 2. Incrementa a quantidade conferida automaticamente
-    if (item.conferido < item.esperado) {
-        item.conferido++;
-        tocarBeepSucesso();
-        atualizarInterfaceTabela();
-        
-        // Verifica se concluiu o item
-        if (item.conferido === item.esperado) {
-            exibirNotificacaoSucesso(`Item ${item.descricao} totalmente conferido!`);
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartCheck - Conferência de Recebimento</title>
+    <!-- Tailwind CSS para um design limpo e profissional -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                        accent: '#3b82f6',
+                        success: '#22c55e',
+                        danger: '#ef4444'
+                    }
+                }
+            }
         }
-    } else {
-        tocarAlertaErro();
-        exibirMensagemAlerta(`Aviso: Quantidade excedida para o item ${item.descricao}!`);
-    }
+    </script>
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen font-sans p-4">
 
-    // 3. Verifica se toda a nota foi concluída para liberar o envio automático
-    verificarConclusaoTotal();
-}
+    <!-- Container Principal -->
+    <div class="max-w-md mx-auto space-y-4">
+        
+        <!-- Cabeçalho -->
+        <header class="bg-cardbg p-4 rounded-xl shadow-lg border border-slate-800 flex justify-between items-center">
+            <div>
+                <h1 class="text-lg font-bold text-blue-400">SmartCheck <span class="text-xs bg-blue-900 text-blue-200 px-2 py-0.5 rounded-full">v1.0</span></h1>
+                <p class="text-xs text-slate-400">NF-e: <span id="nf-numero" class="font-semibold text-slate-200">45892</span> | Fornecedor: <span class="text-slate-200">Metalúrgica ABC</span></p>
+            </div>
+            <div id="status-badge" class="px-3 py-1 text-xs font-bold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                Em Andamento
+            </div>
+        </header>
 
-function verificarConclusaoTotal() {
-    let tudoConferido = itensRecebimento.every(i => i.conferido === i.esperado);
-    if (tudoConferido) {
-        // Dispara a rotina de fechamento ou gera o arquivo de integração
-        gerarPayloadEntradaEstoque();
-    }
-}
+        <!-- Barra de Progresso -->
+        <div class="bg-cardbg p-4 rounded-xl shadow-lg border border-slate-800 space-y-2">
+            <div class="flex justify-between text-xs font-medium text-slate-400">
+                <span>Progresso da Conferência</span>
+                <span id="progresso-texto">0 / 35 itens</span>
+            </div>
+            <div class="w-full bg-slate-700 h-3 rounded-full overflow-hidden">
+                <div id="barra-progresso" class="bg-blue-500 h-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Área de Bipagem -->
+        <div class="bg-cardbg p-4 rounded-xl shadow-lg border border-slate-800 space-y-3">
+            <label for="input-bip" class="block text-xs font-semibold uppercase tracking-wider text-slate-400">Leitura de Código de Barras</label>
+            <div class="flex gap-2">
+                <input type="text" id="input-bip" autofocus placeholder="Bipe o código ou digite..." 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 text-lg">
+                <button onclick="processarLeituraManual()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-lg font-medium transition">OK</button>
+            </div>
+            <p id="feedback-msg" class="text-xs text-slate-400 h-4"></p>
+        </div>
+
+        <!-- Lista de Itens Conferidos -->
+        <div class="bg-cardbg p-4 rounded-xl shadow-lg border border-slate-800 space-y-3">
+            <h2 class="text-sm font-bold text-slate-300">Itens da Nota Fiscal</h2>
+            <div id="lista-itens" class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                <!-- Preenchido via JavaScript -->
+            </div>
+        </div>
+
+        <!-- Ações Finais -->
+        <button onclick="finalizarConferencia()" id="btn-finalizar" disabled
+            class="w-full bg-slate-700 text-slate-400 font-bold py-3 rounded-xl transition cursor-not-allowed">
+            Finalizar e Gerar Entrada
+        </button>
+
+    </div>
+
+    <!-- Script de Lógica do Protótipo -->
+    <script>
+        // Dados simulados da Nota Fiscal
+        let itens = [
+            { id: "7891001", desc: "Correia A-40", esperado: 10, conferido: 0 },
+            { id: "7891002", desc: "Rolamento 6204", esperado: 15, conferido: 0 },
+            { id: "7891003", desc: "Graxa Industrial 1kg", esperado: 10, conferido: 0 }
+        ];
+
+        const inputBip = document.getElementById('input-bip');
+        const listaItensDiv = document.getElementById('lista-itens');
+        const progressoBarra = document.getElementById('barra-progresso');
+        const progressoTexto = document.getElementById('progresso-texto');
+        const feedbackMsg = document.getElementById('feedback-msg');
+        const statusBadge = document.getElementById('status-badge');
+        const btnFinalizar = document.getElementById('btn-finalizar');
+
+        // Renderiza a lista na tela
+        function renderizarTabela() {
+            listaItensDiv.innerHTML = '';
+            let totalEsperado = 0;
+            let totalConferido = 0;
+
+            itens.forEach(item => {
+                totalEsperado += item.esperado;
+                totalConferido += item.conferido;
+
+                let statusColor = 'text-slate-400 bg-slate-800';
+                let statusText = 'Pendente';
+                if (item.conferido > 0 && item.conferido < item.esperado) {
+                    statusColor = 'text-amber-400 bg-amber-500/10 border border-amber-500/30';
+                    statusText = 'Parcial';
+                } else if (item.conferido === item.esperado) {
+                    statusColor = 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/30';
+                    statusText = 'OK';
+                } else if (item.conferido > item.esperado) {
+                    statusColor = 'text-rose-400 bg-rose-500/10 border border-rose-500/30';
+                    statusText = 'Excesso';
+                }
+
+                let html = `
+                    <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex justify-between items-center">
+                        <div>
+                            <p class="text-sm font-semibold text-slate-200">${item.desc}</p>
+                            <p class="text-xs text-slate-400">Cód: ${item.id}</p>
+                        </div>
+                        <div class="text-right flex items-center gap-3">
+                            <div>
+                                <span class="text-sm font-bold text-slate-100">${item.conferido}</span>
+                                <span class="text-xs text-slate-500">/ ${item.esperado}</span>
+                            </div>
+                            <span class="text-xs px-2 py-1 rounded-md font-semibold ${statusColor}">${statusText}</span>
+                        </div>
+                    </div>
+                `;
+                listaItensDiv.innerHTML += html;
+            });
+
+            // Atualiza barra de progresso
+            let porcentagem = Math.min(Math.round((totalConferido / totalEsperado) * 100), 100);
+            progressoBarra.style.width = `${porcentagem}%`;
+            progressoTexto.innerText = `${totalConferido} / ${totalEsperado} itens (${porcentagem}%)`;
+
+            // Verifica se concluiu tudo
+            if (totalConferido >= totalEsperado) {
+                btnFinalizar.disabled = false;
+                btnFinalizar.className = "w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition shadow-lg shadow-emerald-600/20";
+                statusBadge.className = "px-3 py-1 text-xs font-bold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+                statusBadge.innerText = "Concluído";
+            }
+        }
+
+        // Toca bips sonoros usando Web Audio API (sem precisar de arquivos externos)
+        function tocarBeep(sucesso = true) {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = sucesso ? 'sine' : 'sawtooth';
+                osc.frequency.value = sucesso ? 880 : 220; // Agudo para sucesso, grave para erro
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + (sucesso ? 0.1 : 0.3));
+            } catch(e) {}
+        }
+
+        // Processa o código bipado
+        function processarCodigo(codigo) {
+            codigo = codigo.trim();
+            if (!codigo) return;
+
+            let itemEncontrado = itens.find(i => i.id === codigo);
+
+            if (!itemEncontrado) {
+                tocarBeep(false);
+                feedbackMsg.className = "text-xs text-rose-400 font-semibold h-4";
+                feedbackMsg.innerText = `⚠️ Código ${codigo} não pertence a esta NF!`;
+                inputBip.value = '';
+                inputBip.focus();
+                return;
+            }
+
+            if (itemEncontrado.conferido < itemEncontrado.esperado) {
+                itemEncontrado.conferido++;
+                tocarBeep(true);
+                feedbackMsg.className = "text-xs text-emerald-400 font-semibold h-4";
+                feedbackMsg.innerText = `✓ ${itemEncontrado.desc} (+1 registrado)`;
+            } else {
+                tocarBeep(false);
+                feedbackMsg.className = "text-xs text-amber-400 font-semibold h-4";
+                feedbackMsg.innerText = `⚠️ Atenção: Quantidade máxima atingida para ${itemEncontrado.desc}!`;
+            }
+
+            inputBip.value = '';
+            inputBip.focus();
+            renderizarTabela();
+        }
+
+        // Evento ao apertar Enter no input (Disparado pela pistola leitora)
+        inputBip.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                processarCodigo(inputBip.value);
+            }
+        });
+
+        function processarLeituraManual() {
+            processarCodigo(inputBip.value);
+        }
+
+        function finalizarConferencia() {
+            alert("Conferência finalizada com sucesso! Gerando arquivo de integração para o estoque...");
+        }
+
+        // Inicializa a tela
+        renderizarTabela();
+    </script>
+</body>
+</html>
